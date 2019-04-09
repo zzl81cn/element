@@ -285,10 +285,10 @@ describe('Select', () => {
     vm.value = '选项1';
     select.inputHovering = true;
     setTimeout(() => {
-      const icon = vm.$el.querySelector('.el-input__icon');
-      expect(icon.classList.contains('el-icon-circle-close')).to.true;
-      icon.click();
-      expect(vm.value).to.equal('');
+      const iconClear = vm.$el.querySelector('.el-input__icon.el-icon-circle-close');
+      expect(iconClear).to.exist;
+      iconClear.click();
+      expect(vm.value).to.equal(null);
       done();
     }, 100);
   });
@@ -329,6 +329,32 @@ describe('Select', () => {
       expect(vm.$el.querySelector('.el-select-dropdown__item').classList.contains('selected'));
       done();
     }, 100);
+  });
+
+  it('prefixed icon', () => {
+    vm = createTest({
+      template: `
+        <div>
+          <el-select v-model="value">
+            <el-option
+              v-for="item in options"
+              :label="item.label"
+              :key="item.value"
+              :value="item.value">
+            </el-option>
+            <i slot="prefix" class="el-input__icon el-icon-search"></i>
+          </el-select>
+        </div>
+      `,
+
+      data() {
+        return {
+          options: [],
+          value: ''
+        };
+      }
+    });
+    expect(vm.$el.querySelector('.el-input__icon').classList.contains('el-icon-search')).to.be.true;
   });
 
   it('custom el-option template', () => {
@@ -663,11 +689,11 @@ describe('Select', () => {
     vm.$el.querySelector('input').focus();
     vm.$el.querySelector('input').blur();
 
-    vm.$nextTick(_ => {
+    setTimeout(_ => {
       expect(spyFocus.calledOnce).to.be.true;
       expect(spyBlur.calledOnce).to.be.true;
       done();
-    });
+    }, 100);
   });
 
   it('should return focus to input inside select after option select', done => {
@@ -773,6 +799,26 @@ describe('Select', () => {
         done();
       }, 10);
     }, 10);
+  });
+
+  it('render slot `empty`', done => {
+    vm = createVue({
+      template: `
+        <div>
+          <el-select v-model="value">
+            <div class="empty-slot" slot="empty">EmptySlot</div>
+          </el-select>
+        </div>
+      `,
+      data() {
+        return {
+          value: 1
+        };
+      }
+    });
+
+    expect(vm.$el.querySelector('.empty-slot').innerText).to.be.equal('EmptySlot');
+    done();
   });
 
   describe('resetInputHeight', () => {

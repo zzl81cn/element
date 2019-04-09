@@ -13,7 +13,8 @@
           <button
             type="button"
             class="el-picker-panel__shortcut"
-            v-for="shortcut in shortcuts"
+            v-for="(shortcut, key) in shortcuts"
+            :key="key"
             @click="handleShortcutClick(shortcut)">{{ shortcut.text }}</button>
         </div>
         <div class="el-picker-panel__body">
@@ -26,7 +27,7 @@
                 @input="val => userInputDate = val"
                 @change="handleVisibleDateChange" />
             </span>
-            <span class="el-date-picker__editor-wrap" v-clickoutside="() => timePickerVisible = false">
+            <span class="el-date-picker__editor-wrap" v-clickoutside="handleTimePickClose">
               <el-input
                 ref="input"
                 @focus="timePickerVisible = true"
@@ -92,7 +93,7 @@
               @pick="handleDatePick"
               :selection-mode="selectionMode"
               :first-day-of-week="firstDayOfWeek"
-              :value="new Date(value)"
+              :value="value"
               :default-value="defaultValue ? new Date(defaultValue) : null"
               :date="date"
               :disabled-date="disabledDate">
@@ -100,7 +101,7 @@
             <year-table
               v-show="currentView === 'year'"
               @pick="handleYearPick"
-              :value="new Date(value)"
+              :value="value"
               :default-value="defaultValue ? new Date(defaultValue) : null"
               :date="date"
               :disabled-date="disabledDate">
@@ -108,7 +109,7 @@
             <month-table
               v-show="currentView === 'month'"
               @pick="handleMonthPick"
-              :value="new Date(value)"
+              :value="value"
               :default-value="defaultValue ? new Date(defaultValue) : null"
               :date="date"
               :disabled-date="disabledDate">
@@ -124,7 +125,8 @@
           size="mini"
           type="text"
           class="el-picker-panel__link-btn"
-          @click="changeToNow">
+          @click="changeToNow"
+          v-show="selectionMode !== 'dates'">
           {{ t('el.datepicker.now') }}
         </el-button>
         <el-button
@@ -147,7 +149,7 @@
     isDate,
     modifyDate,
     modifyTime,
-    modifyWithDefaultTime,
+    modifyWithTimeString,
     clearMilliseconds,
     clearTime,
     prevYear,
@@ -156,7 +158,8 @@
     nextMonth,
     changeYearMonthAndClampDate,
     extractDateFormat,
-    extractTimeFormat
+    extractTimeFormat,
+    timeWithinRange
   } from '../util';
   import Clickoutside from 'element-ui/src/utils/clickoutside';
   import Locale from 'element-ui/src/mixins/locale';
@@ -185,10 +188,11 @@
       },
 
       value(val) {
+        if (this.selectionMode === 'dates' && this.value) return;
         if (isDate(val)) {
           this.date = new Date(val);
         } else {
-          this.date = this.defaultValue ? new Date(this.defaultValue) : new Date();
+          this.date = this.getDefaultValue();
         }
       },
 
@@ -208,6 +212,8 @@
           if (this.currentView !== 'year' || this.currentView !== 'month') {
             this.currentView = 'month';
           }
+        } else if (newVal === 'dates') {
+          this.currentView = 'date';
         }
       }
     },
@@ -217,23 +223,29 @@
         const format = timeFormat => {this.$refs.timepicker.format = timeFormat;};
         const value = value => {this.$refs.timepicker.value = value;};
         const date = date => {this.$refs.timepicker.date = date;};
+        const selectableRange = selectableRange => {this.$refs.timepicker.selectableRange = selectableRange;};
 
         this.$watch('value', value);
         this.$watch('date', date);
+        this.$watch('selectableRange', selectableRange);
 
         format(this.timeFormat);
         value(this.value);
         date(this.date);
+        selectableRange(this.selectableRange);
       },
 
       handleClear() {
-        this.date = this.defaultValue ? new Date(this.defaultValue) : new Date();
+        this.date = this.getDefaultValue();
         this.$emit('pick', null);
       },
 
       emit(value, ...args) {
         if (!value) {
           this.$emit('pick', value, ...args);
+        } else if (Array.isArray(value)) {
+          const dates = value.map(date => this.showTime ? clearMilliseconds(date) : clearTime(date));
+          this.$emit('pick', dates, ...args);
         } else {
           this.$emit('pick', this.showTime ? clearMilliseconds(value) : clearTime(value), ...args);
         }
@@ -294,7 +306,9 @@
 
       handleTimePick(value, visible, first) {
         if (isDate(value)) {
-          const newDate = this.value ? modifyTime(this.date, value.getHours(), value.getMinutes(), value.getSeconds()) : modifyWithDefaultTime(value, this.defaultTime);
+          const newDate = this.value
+            ? modifyTime(this.value, value.getHours(), value.getMinutes(), value.getSeconds())
+            : modifyWithTimeString(this.getDefaultValue(), this.defaultTime);
           this.date = newDate;
           this.emit(this.date, true);
         } else {
@@ -303,6 +317,10 @@
         if (!first) {
           this.timePickerVisible = visible;
         }
+      },
+
+      handleTimePickClose() {
+        this.timePickerVisible = false;
       },
 
       handleMonthPick(month) {
@@ -319,10 +337,19 @@
 
       handleDatePick(value) {
         if (this.selectionMode === 'day') {
-          this.date = this.value ? modifyDate(this.date, value.getFullYear(), value.getMonth(), value.getDate()) : modifyWithDefaultTime(value, this.defaultTime);
+          let newDate = this.value
+            ? modifyDate(this.value, value.getFullYear(), value.getMonth(), value.getDate())
+            : modifyWithTimeString(value, this.defaultTime);
+          // change default time while out of selectableRange
+          if (!this.checkDateWithinRange(newDate)) {
+            newDate = modifyDate(this.selectableRange[0][0], value.getFullYear(), value.getMonth(), value.getDate());
+          }
+          this.date = newDate;
           this.emit(this.date, this.showTime);
         } else if (this.selectionMode === 'week') {
           this.emit(value.date);
+        } else if (this.selectionMode === 'dates') {
+          this.emit(value, true); // set false to keep panel open
         }
       },
 
@@ -341,15 +368,24 @@
       changeToNow() {
         // NOTE: not a permanent solution
         //       consider disable "now" button in the future
-        if (!this.disabledDate || !this.disabledDate(new Date())) {
+        if ((!this.disabledDate || !this.disabledDate(new Date())) && this.checkDateWithinRange(new Date())) {
           this.date = new Date();
           this.emit(this.date);
         }
       },
 
       confirm() {
-        const date = this.value ? this.date : modifyWithDefaultTime(this.date, this.defaultTime);
-        this.emit(date);
+        if (this.selectionMode === 'dates') {
+          this.emit(this.value);
+        } else {
+          // value were emitted in handle{Date,Time}Pick, nothing to update here
+          // deal with the scenario where: user opens the picker, then confirm without doing anything
+          const value = this.value
+            ? this.value
+            : modifyWithTimeString(this.getDefaultValue(), this.defaultTime);
+          this.date = new Date(value); // refresh date
+          this.emit(value);
+        }
       },
 
       resetView() {
@@ -419,7 +455,7 @@
 
       handleVisibleTimeChange(value) {
         const time = parseDate(value, this.timeFormat);
-        if (time) {
+        if (time && this.checkDateWithinRange(time)) {
           this.date = modifyDate(time, this.year, this.month, this.monthDate);
           this.userInputTime = null;
           this.$refs.timepicker.value = this.date;
@@ -446,7 +482,19 @@
           typeof this.disabledDate === 'function'
             ? !this.disabledDate(value)
             : true
-        );
+        ) && this.checkDateWithinRange(value);
+      },
+
+      getDefaultValue() {
+        // if default-value is set, return it
+        // otherwise, return now (the moment this method gets called)
+        return this.defaultValue ? new Date(this.defaultValue) : new Date();
+      },
+
+      checkDateWithinRange(date) {
+        return this.selectableRange.length > 0
+          ? timeWithinRange(date, this.selectableRange, this.format || 'HH:mm:ss')
+          : true;
       }
     },
 
@@ -459,7 +507,7 @@
         popperClass: '',
         date: new Date(),
         value: '',
-        defaultValue: null,
+        defaultValue: null, // use getDefaultValue() for time computation
         defaultTime: null,
         showTime: false,
         selectionMode: 'day',
@@ -467,6 +515,7 @@
         visible: false,
         currentView: 'date',
         disabledDate: '',
+        selectableRange: [],
         firstDayOfWeek: 7,
         showWeekNumber: false,
         timePickerVisible: false,
@@ -495,7 +544,7 @@
       },
 
       footerVisible() {
-        return this.showTime;
+        return this.showTime || this.selectionMode === 'dates';
       },
 
       visibleTime() {

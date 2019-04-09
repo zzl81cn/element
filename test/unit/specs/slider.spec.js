@@ -1,4 +1,4 @@
-import { createTest, createVue, triggerEvent, destroyVM } from '../util';
+import { createTest, createVue, triggerEvent, destroyVM, waitImmediate } from '../util';
 import Slider from 'packages/slider';
 
 describe('Slider', () => {
@@ -81,11 +81,11 @@ describe('Slider', () => {
     expect(slider.$refs.tooltip.disabled).to.true;
   });
 
-  it('format tooltip', () => {
+  it('format tooltip', async() => {
     vm = createVue({
       template: `
         <div>
-          <el-slider v-model="value" :format-tooltip="formatTooltip">
+          <el-slider ref="slider" v-model="value" :format-tooltip="formatTooltip">
           </el-slider>
         </div>
       `,
@@ -101,23 +101,22 @@ describe('Slider', () => {
         }
       }
     }, true);
-    const slider = vm.$children[0].$children[0];
-    expect(slider.formatTooltip).to.function;
-    vm.$nextTick(() => {
-      expect(slider.formatValue).to.equal('$0');
-    });
+    const sliderButton = vm.$refs.slider.$children[0];
+    await waitImmediate();
+    expect(sliderButton.formatValue).to.equal('$0');
   });
 
   it('drag', done => {
     vm = createVue({
       template: `
         <div>
-          <el-slider v-model="value"></el-slider>
+          <el-slider v-model="value" :vertical="vertical"></el-slider>
         </div>
       `,
 
       data() {
         return {
+          vertical: false,
           value: 0
         };
       }
@@ -128,7 +127,44 @@ describe('Slider', () => {
     slider.onDragEnd();
     setTimeout(() => {
       expect(vm.value > 0).to.true;
-      done();
+      vm.vertical = true;
+      vm.value = 0;
+      vm.$nextTick(() => {
+        expect(vm.value === 0).to.true;
+        slider.onButtonDown({ clientY: 0, preventDefault() {} });
+        slider.onDragging({ clientY: -100 });
+        slider.onDragEnd();
+        setTimeout(() => {
+          expect(vm.value > 0).to.true;
+          done();
+        }, 10);
+      });
+    }, 10);
+  });
+
+  it('accessibility', done => {
+    vm = createVue({
+      template: `
+        <div>
+          <el-slider v-model="value"></el-slider>
+        </div>
+      `,
+
+      data() {
+        return {
+          value: 0.1
+        };
+      }
+    }, true);
+    const slider = vm.$children[0].$children[0];
+    slider.onRightKeyDown();
+    setTimeout(() => {
+      expect(vm.value).to.equal(1);
+      slider.onLeftKeyDown();
+      setTimeout(() => {
+        expect(vm.value).to.equal(0);
+        done();
+      }, 10);
     }, 10);
   });
 
